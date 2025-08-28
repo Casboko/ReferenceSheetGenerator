@@ -1,0 +1,5 @@
+{
+  "name": "Reference Sheet Generator",
+  "description": "Upload a drawing of your character and instantly generate a full reference sheet with front, side, and back views for both portrait and full-body poses.",
+  "requestFramePermissions": []
+}
