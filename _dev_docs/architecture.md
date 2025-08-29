@@ -9,7 +9,7 @@
   - Dev: Vite 5173 → `/api` を Express 8787 へプロキシ
 - Backend (Node 22 + Express)
   - `POST /api/upload`: 受信 → Files API 登録 → fileUri 返却
-  - `POST /api/generate`: 受信（prompt, fileUris[]）→ Gemini 呼び出し → 画像バイト取得 → Files へ出力登録 → 画像データ + fileUri 返却
+  - `POST /api/generate`: 受信（prompt, references[{uri,mime}]）→ Gemini 呼び出し → 画像バイト取得 → Files へ出力登録 → 画像データ + fileUri 返却
 - External
   - Gemini 2.5 Flash Image Preview（画像入出力）
   - Gemini Files API（48h 保存 / 20GB / 2GB/ファイル）
@@ -32,16 +32,18 @@ Browser (Vite:5173)
 
 ## データフロー（概要）
 1. アップロード: フロント → `POST /api/upload` →（Express: Multer メモリ受信）→ Files API 登録 → `fileUri` 受領 → フロントへ返却 → スロットへ割当。
-2. 生成: フロントは `prompt` と使用中の `fileUris[]` を `POST /api/generate` へ送信（candidateCount=1）。
+2. 生成: フロントは `prompt` と使用中の `references`（`{ uri: 'files/<id>', mime: 'image/*' }` の配列, 0〜3）を `POST /api/generate` へ送信（candidateCount=1）。
 3. 生成結果: Backend が Gemini を呼び出し、画像（1枚）バイトを取得。直後に Files へ出力も登録し、その `fileUri` と画像データをフロントへ返却。
 4. 表示/参照: フロントは最新出力を表示し、トグルON時は次ターンの参照に `lastOutput.fileUri` を使用（ステートレス）。トグルOFF時の自動復元は行わない（PRD準拠）。
 
 ## 入力/検証（MVP）
 - `/api/upload` は MIME を `image/jpeg`・`image/png`・`image/webp` のみ許可し、サイズは 7MB/枚以下を強制する。違反時は `400`（種類）/`413`（サイズ）を返す。
-- `/api/generate` は `fileUris.length ≤ 3` を必須とし、超過時は `400` を返す。`candidateCount` はサーバ側で 1 に固定し、リクエスト値があっても無視/丸める。
+- `/api/generate` は `references.length ≤ 3` を必須とし、超過時は `400` を返す。各参照は `{ uri: 'files/<id>', mime: 'image/*' }`。`candidateCount` はサーバ側で 1 に固定し、リクエスト値があっても無視/丸める。
 
-## エラーフロー（要点）
-- 429: 指数バックオフ（1s→2s→4s, 最大3回）→ 失敗時はユーザ通知。UIは同時実行1件に直列化（生成中はボタン非活性）。
+## MIME 解決方針（MVP）
+- 低レイテンシのため、クライアントが `references[{ uri, mime }]` として MIME を併せて送る（Files メタ取得は行わない）。将来、厳密性が必要になればサーバ側で Files メタデータ照会に切替可能。
+
+- 429: 指数バックオフ（例: 1s→2s→4s, 最大3回, ジッター推奨）→ 失敗時はユーザ通知。UIは同時実行1件に直列化（生成中はボタン非活性）。レート制限の上限値は Tier/時期で変動するため数値を仕様に固定しない。
 - 安全ブロック: 日本語メッセージ表示と再プロンプト誘導。モデル応答の Safety 情報が閾値超過の場合はブロック/警告を返し、UIへ伝播（詳細は error-handling を参照）。
 - 400/413: 枚数/サイズ/形式不正はサーバでバリデーションしエラー返却。フロントは事前検証で抑止。
 
@@ -58,6 +60,7 @@ Browser (Vite:5173)
 - 開発: Vite(5173) と Express(8787) を並走、`/api` は Vite のプロキシで Express へ。
 - 本番: Express が `dist/` を静的配信しつつ API を提供（単一オリジン）。
 - 代替（将来）: 静的ホスティング + 別ホストAPI の場合は CORS 設定を追加。
+ - 公開運用へ移行する場合、認証（例: OIDC/OAuth）と厳格な CORS/Rate Limit 政策を導入（MVP外）。
  - 生成画像には AI 透かし（SynthID）が含まれる旨を UI に告知（文言は PRD/UX 側で定義）。ダウンロード方針は PRD の「ダウンロードUX方針」に準拠。
 
 ## 実装詳細（MVP）

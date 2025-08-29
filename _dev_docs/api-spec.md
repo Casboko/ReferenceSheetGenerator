@@ -13,14 +13,15 @@
 - `Asset`:
   - `id: string`（サーバ生成の一意ID）
   - `name: string`（ファイル名）
-  - `fileUri: string`（Files APIの参照URI）
+  - `fileUri: string`（Files APIの参照URI。形式は `files/<id>`）
   - `mime: 'image/jpeg' | 'image/png' | 'image/webp'`
   - `size: number`（bytes）
 - `GeneratedImage`:
   - `id: string`
   - `dataUrl: string`（`data:image/*;base64,...`）
-  - `fileUri: string`（Files APIに登録した出力のURI）
+  - `fileUri: string`（Files APIに登録した出力のURI。形式は `files/<id>`）
   - `mime: string`（モデル応答準拠：主にimage/webp or image/jpeg）
+  - `downloadName: string`（例: `generated-2025-08-29T10-23-00Z.webp`）
   - `width?: number`（取得できる場合のみ）
   - `height?: number`（取得できる場合のみ）
 - `ErrorResponse`:
@@ -70,8 +71,10 @@ curl -X POST http://localhost:5173/api/upload \
 ```json
 {
   "prompt": "string",
-  "fileUris": ["string", "string", "string"],
-  "note": "fileUris は 0〜3 件。4 件以上は 400。",
+  "references": [
+    { "uri": "files/abc123", "mime": "image/png" },
+    { "uri": "files/def456", "mime": "image/jpeg" }
+  ],
   "options": {
     "temperature": 0.4,
     "candidateCount": 1
@@ -85,8 +88,9 @@ curl -X POST http://localhost:5173/api/upload \
     {
       "id": "string",
       "dataUrl": "data:image/webp;base64,....",
-      "fileUri": "string",
+      "fileUri": "files/xyz789",
       "mime": "image/webp",
+      "downloadName": "generated-2025-08-29T10-23-00Z.webp",
       "width": 1024,
       "height": 1024
     }
@@ -95,14 +99,16 @@ curl -X POST http://localhost:5173/api/upload \
 }
 ```
 - エラー:
-  - `400` 入力不足/枚数超過（fileUris > 3）
+  - `400` 入力不足/枚数超過（references > 3）
   - `413` 画像サイズ超過
   - `429` レート制限（フロントは再試行UI）
   - `5xx` 外部API失敗
 
 検証ルール（サーバ側必須）
-- `fileUris.length` は 0〜3（4件以上は 400）
+- `references.length` は 0〜3（4件以上は 400）
+- 各参照は `{ uri: 'files/<id>', mime: 'image/jpeg'|'image/png'|'image/webp' }`
 - `candidateCount` はサーバ側で 1 に固定（リクエスト値は無視）
+- `options.temperature` は未設定または任意値でもサーバ既定値（例 0.4）に丸める（MVP）
 - Safety 情報が閾値超過の場合、`SAFETY_BLOCKED` 等のエラーとして返し、UIへ伝播（文言は error-handling に準拠）
 
 例（curl）
@@ -111,7 +117,10 @@ curl -X POST http://localhost:5173/api/generate \
   -H 'Content-Type: application/json' \
   -d '{
     "prompt": "正面向きの上半身を明るい背景で",
-    "fileUris": ["files://...A", "files://...B"],
+    "references": [
+      {"uri": "files/abc123", "mime": "image/png"},
+      {"uri": "files/def456", "mime": "image/jpeg"}
+    ],
     "options": {"temperature": 0.4}
   }'
 ```
@@ -123,9 +132,23 @@ curl -X POST http://localhost:5173/api/generate \
 - 429 Too Many Requests: レート制限（`Retry-After` 付与可）
 - 5xx: 外部API失敗/一時障害
 
+## エラーコード ⇔ HTTP ステータス
+
+| code                | HTTP   | 備考 |
+|---------------------|--------|------|
+| VALIDATION_ERROR    | 400    | 形式/必須/一般バリデーション |
+| INVALID_MIME        | 400    | MIME 不正 |
+| SIZE_TOO_LARGE      | 413    | 画像サイズ上限超過 |
+| TOO_MANY_REFERENCES | 400    | 参照枚数が 3 超 |
+| SAFETY_BLOCKED      | 400    | 入力修正で解消可能なため 4xx 扱い |
+| RATE_LIMITED        | 429    | `Retry-After` を付与（可能なら） |
+| EXTERNAL_ERROR      | 502/503| 外部API障害。`Retry-After` 任意 |
+
 ## 備考（サーバ固定値/運用）
 - `candidateCount` はサーバ側で 1 に固定（将来拡張時はバージョン分岐）。
+- `options.temperature` はサーバ既定値に丸める（例 0.4）。
 - Safety 情報は error-handling の方針に従い UI へ最小限の情報で伝達。
+- Files URI は Files API の `file.uri` をそのまま使用（例: `files/abc123`）。
 
 ## エラー形式（共通）
 ```json

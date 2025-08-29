@@ -13,7 +13,7 @@
 ## Files API
 - 容量: プロジェクト最大20GB / 1ファイル最大2GB
 - 保持期間: 48時間（ダウンロード不可、参照のみ）
-- 利用: 画像はFilesへアップロードし、URIをモデル入力に渡す
+- 利用: 画像はFilesへアップロードし、返却される `file.uri`（例: `files/abc123`）をモデル入力に渡す
 
 ## レート/コスト（目安）
 - レート: プレビュー版の上限を想定（詳細は公式に準拠）
@@ -30,11 +30,12 @@ import { GoogleGenerativeAI } from '@google/genai';
 const genai = new GoogleGenerativeAI({ apiKey: process.env.GEMINI_API_KEY! });
 const model = genai.getGenerativeModel({ model: 'gemini-2.5-flash-image-preview' });
 
-const parts = fileUris.map(uri => ({ fileData: { fileUri: uri } }));
+// references: { uri: 'files/<id>', mime: 'image/png' | 'image/jpeg' | 'image/webp' }[]
+const parts = references.map(({ uri, mime }) => createPartFromUri(uri, mime));
 const res = await model.generateContent({
   contents: [{ role: 'user', parts: [ { text: prompt }, ...parts ] }],
   responseModalities: ['TEXT','IMAGE'],
-  generationConfig: { temperature: 0.4, candidateCount: 1 },
+  generationConfig: { temperature: 0.4, candidateCount: 1 }, // MVPはサーバ側固定
 });
 ```
 
@@ -47,4 +48,3 @@ const res = await model.generateContent({
 
 ---
 関連: `./api-spec.md`, `./performance-ops.md`, `./security-config.md`
-
