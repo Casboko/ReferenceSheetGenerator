@@ -7,7 +7,7 @@
 - ベースURL: 同一オリジン
 - 認証: なし（内部利用前提）
 - 速度制御: 429時にバックエンドで指数バックオフ＋フロントへエラー戻し
-- 制約: 入力画像は最大3枚/各7MB以下、Files URI参照
+- 制約: 入力画像は最大3枚/各7MB以下、Files URI参照。`candidateCount` はサーバ側で 1 に固定（リクエスト値は無視）。
 
 ## POST /api/upload
 - 概要: 画像ファイルを受け取り、Files APIへ登録してURIを返す。
@@ -25,7 +25,8 @@
 }
 ```
 - エラー:
-  - `400` サイズ/形式不正
+  - `400` 形式不正（MIME は image/jpeg・image/png・image/webp のみ）
+  - `413` サイズ超過（各7MB上限）
   - `502/503` 外部API失敗（再試行ヒント含む）
 
 ## POST /api/generate
@@ -34,7 +35,8 @@
 ```json
 {
   "prompt": "string",
-  "fileUris": ["string", "string", "string"],
+  "fileUris": ["string", "string", "string"],  
+  "note": "fileUris は 0〜3 件。4 件以上は 400。",
   "options": {
     "temperature": 0.4,
     "candidateCount": 1
@@ -57,10 +59,14 @@
 }
 ```
 - エラー:
-  - `400` 入力不足/枚数超過
+  - `400` 入力不足/枚数超過（fileUris > 3）
   - `413` 画像サイズ超過
   - `429` レート制限（フロントは再試行UI）
   - `5xx` 外部API失敗
+
+## 備考（サーバ側固定）
+- `candidateCount` はサーバ側で 1 に固定（将来拡張を見据えつつ、MVPでは固定）。
+- Safety 情報が閾値超過の場合、UIへブロック/警告を伝達（文言は error-handling に準拠）。
 
 ## エラー形式（共通）
 ```json
@@ -81,4 +87,3 @@
 
 ---
 関連: `./gemini-integration.md`, `./error-handling.md`, `./state-model.md`
-

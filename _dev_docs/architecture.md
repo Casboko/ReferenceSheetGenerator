@@ -34,11 +34,15 @@ Browser (Vite:5173)
 1. アップロード: フロント → `POST /api/upload` →（Express: Multer メモリ受信）→ Files API 登録 → `fileUri` 受領 → フロントへ返却 → スロットへ割当。
 2. 生成: フロントは `prompt` と使用中の `fileUris[]` を `POST /api/generate` へ送信（candidateCount=1）。
 3. 生成結果: Backend が Gemini を呼び出し、画像（1枚）バイトを取得。直後に Files へ出力も登録し、その `fileUri` と画像データをフロントへ返却。
-4. 表示/参照: フロントは最新出力を表示し、トグルON時は次ターンの参照に `lastOutput.fileUri` を使用（ステートレス）。
+4. 表示/参照: フロントは最新出力を表示し、トグルON時は次ターンの参照に `lastOutput.fileUri` を使用（ステートレス）。トグルOFF時の自動復元は行わない（PRD準拠）。
+
+## 入力/検証（MVP）
+- `/api/upload` は MIME を `image/jpeg`・`image/png`・`image/webp` のみ許可し、サイズは 7MB/枚以下を強制する。違反時は `400`（種類）/`413`（サイズ）を返す。
+- `/api/generate` は `fileUris.length ≤ 3` を必須とし、超過時は `400` を返す。`candidateCount` はサーバ側で 1 に固定し、リクエスト値があっても無視/丸める。
 
 ## エラーフロー（要点）
-- 429: 指数バックオフ（1s→2s→4s, 最大3回）→ 失敗時はユーザ通知。
-- 安全ブロック: 日本語メッセージ表示と再プロンプト誘導。
+- 429: 指数バックオフ（1s→2s→4s, 最大3回）→ 失敗時はユーザ通知。UIは同時実行1件に直列化（生成中はボタン非活性）。
+- 安全ブロック: 日本語メッセージ表示と再プロンプト誘導。モデル応答の Safety 情報が閾値超過の場合はブロック/警告を返し、UIへ伝播（詳細は error-handling を参照）。
 - 400/413: 枚数/サイズ/形式不正はサーバでバリデーションしエラー返却。フロントは事前検証で抑止。
 
 ## 代替案（チャット方式）
@@ -54,16 +58,18 @@ Browser (Vite:5173)
 - 開発: Vite(5173) と Express(8787) を並走、`/api` は Vite のプロキシで Express へ。
 - 本番: Express が `dist/` を静的配信しつつ API を提供（単一オリジン）。
 - 代替（将来）: 静的ホスティング + 別ホストAPI の場合は CORS 設定を追加。
+ - 生成画像には AI 透かし（SynthID）が含まれる旨を UI に告知（文言は PRD/UX 側で定義）。ダウンロード方針は PRD の「ダウンロードUX方針」に準拠。
 
 ## 実装詳細（MVP）
 - Upload: Multer のメモリストレージで受け取り、ディスクを経由せずに Files へ登録（<=7MB/枚）。
-- Generate: `responseModalities=['TEXT','IMAGE']`, `candidateCount=1`。出力画像は毎回 Files に登録して `fileUri` を返却。UI表示は受領した画像バイトを使用。
+- Generate: `responseModalities=['TEXT','IMAGE']`, `candidateCount=1`（サーバ側で固定）。出力画像は毎回 Files に登録して `fileUri` を返却。UI表示は受領した画像バイトを使用。Safety 情報はエラーフローに従い UI へ伝播。
 - 画像変換: サーバ側変換なし。UI側で正方形プレビュー（必要に応じパディング/クロップ）。
 - ブラウザ: 最新 Chrome を主サポート（Evergreen）。
 
 ## 完成定義（DoD）
 - 実装者が層/責務/データの所在で迷わない。
 - API仕様/UI仕様/運用要件と整合。
+ - サーバ側の入力/出力バリデーション（MIME・サイズ・枚数・candidateCount固定）が実装済み。
 
 ## 更新トリガー
 - 主要依存や構成の変更、Files/Gemini仕様更新時。
