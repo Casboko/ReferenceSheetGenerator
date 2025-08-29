@@ -1,0 +1,72 @@
+# アーキテクチャ概要 / 方針
+
+- 目的: ステートレス方針と外部制約に基づき、構成/責務/データ流を明確化する。
+- 想定読者: PM/開発/デザイン/運用。
+
+## 全体構成（テキスト図）
+- Frontend (React + Vite)
+  - 参照スロットUI / アップロード / 生成操作
+  - Dev: Vite 5173 → `/api` を Express 8787 へプロキシ
+- Backend (Node 22 + Express)
+  - `POST /api/upload`: 受信 → Files API 登録 → fileUri 返却
+  - `POST /api/generate`: 受信（prompt, fileUris[]）→ Gemini 呼び出し → 画像バイト取得 → Files へ出力登録 → 画像データ + fileUri 返却
+- External
+  - Gemini 2.5 Flash Image Preview（画像入出力）
+  - Gemini Files API（48h 保存 / 20GB / 2GB/ファイル）
+
+```
+Browser (Vite:5173)
+  ├─ POST /api/upload   ─proxy→  Express:8787  ─→  Files API   ─→ fileUri
+  └─ POST /api/generate ─proxy→  Express:8787  ─→  Gemini      ─→ image bytes
+                                           └─→  Files(output) ─→ fileUri
+  ←──────────── image data (blob/dataURL) + fileUri ───────────────
+```
+
+## ステートレス設計の根拠
+- モデル側の暗黙履歴を持ち越さず、毎ターンの入力をUIで明示選択。
+- 冪等性/再実行容易性/デバッグ性を向上。
+
+## コンポーネント境界
+- フロント: UI/入力検証/最小の整形のみ。
+- バック: 認証/鍵秘匿/Files登録/モデル呼び出し/再試行。
+
+## データフロー（概要）
+1. アップロード: フロント → `POST /api/upload` →（Express: Multer メモリ受信）→ Files API 登録 → `fileUri` 受領 → フロントへ返却 → スロットへ割当。
+2. 生成: フロントは `prompt` と使用中の `fileUris[]` を `POST /api/generate` へ送信（candidateCount=1）。
+3. 生成結果: Backend が Gemini を呼び出し、画像（1枚）バイトを取得。直後に Files へ出力も登録し、その `fileUri` と画像データをフロントへ返却。
+4. 表示/参照: フロントは最新出力を表示し、トグルON時は次ターンの参照に `lastOutput.fileUri` を使用（ステートレス）。
+
+## エラーフロー（要点）
+- 429: 指数バックオフ（1s→2s→4s, 最大3回）→ 失敗時はユーザ通知。
+- 安全ブロック: 日本語メッセージ表示と再プロンプト誘導。
+- 400/413: 枚数/サイズ/形式不正はサーバでバリデーションしエラー返却。フロントは事前検証で抑止。
+
+## 代替案（チャット方式）
+- 長所: 過去文脈を活かした創作が可能。
+- 短所: 暗黙依存/再現困難/モデル挙動の不確実性。
+- 結論: MVPはステートレスを採用（詳細は ADR 参照）。
+
+## 採用技術
+- React 19 / Vite 6 / TypeScript
+- Node 22 / Express / Multer (memoryStorage) / @google/genai SDK
+
+## 開発/本番運用
+- 開発: Vite(5173) と Express(8787) を並走、`/api` は Vite のプロキシで Express へ。
+- 本番: Express が `dist/` を静的配信しつつ API を提供（単一オリジン）。
+- 代替（将来）: 静的ホスティング + 別ホストAPI の場合は CORS 設定を追加。
+
+## 実装詳細（MVP）
+- Upload: Multer のメモリストレージで受け取り、ディスクを経由せずに Files へ登録（<=7MB/枚）。
+- Generate: `responseModalities=['TEXT','IMAGE']`, `candidateCount=1`。出力画像は毎回 Files に登録して `fileUri` を返却。UI表示は受領した画像バイトを使用。
+- 画像変換: サーバ側変換なし。UI側で正方形プレビュー（必要に応じパディング/クロップ）。
+- ブラウザ: 最新 Chrome を主サポート（Evergreen）。
+
+## 完成定義（DoD）
+- 実装者が層/責務/データの所在で迷わない。
+- API仕様/UI仕様/運用要件と整合。
+
+## 更新トリガー
+- 主要依存や構成の変更、Files/Gemini仕様更新時。
+
+---
+関連: `./adr/0001-stateless-vs-chat.md`, `./api-spec.md`, `./gemini-integration.md`
